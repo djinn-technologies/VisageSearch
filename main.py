@@ -5,9 +5,15 @@ from bs4 import BeautifulSoup
 import os
 from datetime import datetime
 import webbrowser
+import cv2
+from mtcnn import MTCNN
+from PIL import Image
 
 # Ensure necessary directories exist
 os.makedirs("logs", exist_ok=True)
+
+# Initialize MTCNN face detector
+detector = MTCNN()
 
 # Function to log error messages to a log file
 def log_error(message):
@@ -16,9 +22,9 @@ def log_error(message):
 
 # Logging function for compliance
 def log_user_acceptance():
-    """Log the user's acceptance of the privacy terms."""
-    with open(os.path.join("logs", "privacy_acceptance_log.txt"), "a") as log_file:
-        log_file.write(f"User accepted Privacy Disclaimer on {datetime.now()}\n")
+    """Log the user's acceptance of the terms."""
+    with open(os.path.join("logs", "acceptance_log.txt"), "a") as log_file:
+        log_file.write(f"User accepted terms on {datetime.now()}\n")
 
 # Function to show GDPR and legal compliance modal
 def show_compliance_modal():
@@ -68,7 +74,7 @@ def show_compliance_modal():
             modal.destroy()  # Close the modal
             root.deiconify()  # Show the main window after agreement
         else:
-            messagebox.showwarning("Warning", "You must agree to the disclaimer to proceed.")
+            messagebox.showwarning("Warning", "You must agree to the terms to proceed.")
 
     accept_button = tk.Button(modal, text="Accept", command=on_accept)
     accept_button.pack(pady=10)
@@ -171,7 +177,72 @@ def stop_downloading():
     stop_downloads = True
     open_folder_button.config(state=tk.NORMAL)  # Enable the open folder button
 
-# UI function to handle the search process
+# Function to detect faces in an image and return details like bounding boxes
+def detect_faces(image_path):
+    """Detect faces in an image and return details like bounding boxes."""
+    img = cv2.imread(image_path)
+    
+    # Check if the image was successfully loaded
+    if img is None:
+        print(f"Error: Unable to load image at {image_path}")
+        log_error(f"Error: Unable to load image at {image_path}")
+        return []  # Return an empty list indicating no faces detected
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    faces = detector.detect_faces(img_rgb)
+    
+    return faces
+
+# Function to score detected faces based on size, centeredness, and clarity
+def score_face(face, image_width, image_height):
+    """Score the detected face based on size, centeredness, and clarity."""
+    x, y, width, height = face['box']
+    face_center_x = x + width / 2
+    face_center_y = y + height / 2
+
+    # Face size relative to image size
+    size_score = (width * height) / (image_width * image_height)
+
+    # Centeredness score: How close the face center is to the image center
+    center_score = 1 - ((abs(face_center_x - image_width / 2) / (image_width / 2)) + (abs(face_center_y - image_height / 2) / (image_height / 2))) / 2
+
+    # Combined score
+    return size_score * center_score
+
+# Function to process images in a directory and select the best ones based on face detection
+def process_images(image_dir, selected_dir):
+    """Process images in the directory, selecting the best ones based on face detection."""
+    os.makedirs(selected_dir, exist_ok=True)
+    
+    # List of valid image extensions
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
+
+    for img_name in os.listdir(image_dir):
+        # Check if the file has a valid image extension
+        if not img_name.lower().endswith(valid_extensions):
+            print(f"Skipping non-image file: {img_name}")
+            continue
+        
+        img_path = os.path.join(image_dir, img_name)
+        faces = detect_faces(img_path)
+
+        if not faces:
+            print(f"No faces detected in {img_name}")
+            continue
+
+        # Assuming the best face is the one with the highest score
+        img = Image.open(img_path)
+        img_width, img_height = img.size
+
+        best_face = max(faces, key=lambda face: score_face(face, img_width, img_height))
+        best_score = score_face(best_face, img_width, img_height)
+
+        # If the score is above a threshold, save the image
+        if best_score > 0.5:  # Adjust this threshold as necessary
+            img.save(os.path.join(selected_dir, img_name))
+            print(f"Selected {img_name} with a score of {best_score}")
+
+# Update search_images function to include face detection
 def search_images():
     """Handle the image search process initiated by the user."""
     global stop_downloads, current_name
@@ -195,6 +266,15 @@ def search_images():
     # Proceed with scraping after acceptance
     images = scrape_images(current_name, pages)
     download_images(images, current_name)
+
+    # Process downloaded images for face detection
+    img_dir = os.path.join("downloads", current_name)
+    selected_dir = os.path.join("downloads", current_name, "selected")
+
+    # Show a modal indicating face detection is starting
+    messagebox.showinfo("Processing Images", "Starting face detection and selection process.")
+    process_images(img_dir, selected_dir)
+    messagebox.showinfo("Processing Complete", f"Face detection and selection complete. Selected images saved to {selected_dir}")
 
 # Function to create and show the main application window
 def create_main_window():
