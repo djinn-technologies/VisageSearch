@@ -1,0 +1,4 @@
+# Contact Information for Security Issues
+
+Contact: info@djinn.clouod
+Preferred-Languages: en
